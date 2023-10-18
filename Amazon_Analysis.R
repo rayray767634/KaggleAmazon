@@ -180,7 +180,7 @@ CV_results_nb <-nb_wf  %>%
             metrics = metric_set(roc_auc))
 
 # Find best tuning parameters
-bestTune_nb <- CV_results_rf %>%
+bestTune_nb <- CV_results_nb %>%
   select_best("roc_auc")
 
 # Finalize workflow and predict
