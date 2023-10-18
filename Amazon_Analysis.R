@@ -6,7 +6,8 @@ library(tidymodels)
 library(glmnet)
 library(stacks)
 library(embed)
-
+library(discrim)
+library(naivebayes)
 
 # read in data
 amaz.test <- vroom("amazontest.csv")
@@ -151,3 +152,50 @@ amazon_rf_predictions <- predict(final_wf_rf,
   rename(Action=.pred_1) #rename pred1 to Action (for submission to Kaggle)
 
 vroom_write(x=amazon_rf_predictions, file="./AmazonRFPreds.csv", delim=",")
+
+
+# naive bayes
+
+## nb model 
+nb_model <- naive_Bayes(Laplace = tune(), smoothness = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("naivebayes")
+
+nb_wf <- workflow() %>%
+  add_recipe(my_recipe_pen) %>%
+  add_model(nb_model)
+
+# Tune smoothness and Laplace here
+# Set up grid of tuning values
+tuning_grid_nb <- grid_regular(Laplace(),
+                               smoothness(),
+                               levels = 5)
+
+# Set up K-fold CV
+folds <- vfold_cv(amaz.train, v = 5, repeats = 1)
+# Run the CV
+CV_results_nb <-nb_wf  %>%
+  tune_grid(resamples = folds,
+            grid = tuning_grid_nb,
+            metrics = metric_set(roc_auc))
+
+# Find best tuning parameters
+bestTune_nb <- CV_results_rf %>%
+  select_best("roc_auc")
+
+# Finalize workflow and predict
+final_wf_nb <- 
+  nb_wf %>%
+  finalize_workflow(bestTune_nb) %>%
+  fit(data = amaz.train)
+
+# predict
+amazon_nb_predictions <- predict(final_wf_nb,
+                                 new_data = amaz.test,
+                                 type = "prob") %>%
+  mutate(ACTION = ifelse(.pred_1>.5,1,0)) %>%
+  bind_cols(., amaz.test) %>% #Bind predictions with test data
+  select(id, .pred_1) %>% #Just keep id and pred_1
+  rename(Action=.pred_1) #rename pred1 to Action (for submission to Kaggle)
+
+vroom_write(x=amazon_nb_predictions, file="./AmazonNBPreds.csv", delim=",")
