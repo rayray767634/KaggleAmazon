@@ -9,6 +9,7 @@ library(embed)
 library(discrim)
 library(naivebayes)
 library(kknn)
+library(kernlab)
 
 # read in data
 amaz.test <- vroom("amazontest.csv")
@@ -257,7 +258,7 @@ vroom_write(x=amazon_knn_predictions, file="./AmazonKNNPreds.csv", delim=",")
 my_recipe_pca <- recipe(ACTION ~ ., data = amaz.train) %>%
   step_mutate_at(all_numeric_predictors(), fn = factor) %>%
   step_other(all_nominal_predictors(), threshold = .001) %>%
-  step_dummy(all_nominal_predictors()) %>%
+  step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION)) %>%
   step_normalize(all_predictors()) %>%
   step_pca(all_predictors(), threshold = .9)
 
@@ -351,3 +352,49 @@ amazon_knn_pca_predictions <- predict(final_wf_knn,
   rename(Action=.pred_1) #rename pred1 to Action (for submission to Kaggle)
 
 vroom_write(x=amazon_knn_pca_predictions, file="./AmazonKNNPCAPreds.csv", delim=",")
+
+# SVMs
+
+# model
+svmLinear <- svm_linear(cost = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab")
+
+
+svm_wf <- workflow() %>%
+  add_recipe(my_recipe_pca) %>%
+  add_model(svmLinear)
+
+# fit or tune model
+
+tuning_grid_svm <- grid_regular(cost(),
+                                levels = 5)
+
+# Set up K-fold CV
+folds <- vfold_cv(amaz.train, v = 5, repeats = 1)
+# Run the CV
+CV_results_svm <-svm_wf  %>%
+  tune_grid(resamples = folds,
+            grid = tuning_grid_svm,
+            metrics = metric_set(roc_auc))
+
+ # Find best tuning parameters
+bestTune_svm <- CV_results_svm %>%
+  select_best("roc_auc")
+
+# Finalize workflow and predict
+final_wf_svm <- 
+  svm_wf %>%
+  finalize_workflow(bestTune_svm) %>%
+  fit(data = amaz.train)
+
+# predict
+amazon_svm_lin_predictions <- predict(final_wf_svm,
+                                      new_data = amaz.test,
+                                      type = "prob") %>%
+  mutate(ACTION = ifelse(.pred_1>.5,1,0)) %>%
+  bind_cols(., amaz.test) %>% #Bind predictions with test data
+  select(id, .pred_1) %>% #Just keep id and pred_1
+  rename(Action=.pred_1) #rename pred1 to Action (for submission to Kaggle)
+
+vroom_write(x=amazon_svm_lin_predictions, file="./AmazonSVMLINPreds.csv", delim=",")
